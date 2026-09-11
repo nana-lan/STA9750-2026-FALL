@@ -1,0 +1,25 @@
+project:
+  type: website
+  output-dir: docs
+
+website:
+  title: "STA 9750 Submission Material"
+  description:
+    Course Projects for STA 9750 at Baruch College
+  site-url: "https://nana-lan.github.io/STA9750-2026-FALL/"
+  navbar:
+    background: primary
+    search: false
+  page-footer:
+    right: "Last updated on {{< meta date-modified >}}"
+    
+format:
+  html:
+    theme: lumen
+    toc: false
+    code-fold: true
+    code-summary: "Show the code"
+    code-copy: hover
+
+editor:
+  mode: source

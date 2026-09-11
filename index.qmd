@@ -1,0 +1,15 @@
+---
+title: "Introduction about me."
+---
+Hi. My name is *Wen-Lan Cheng*, but you can also call me *Nana*.
+
+About me:
+
+- **Education**: 
+   * M.S. AI and Business Analytics | Baruch College, CUNY
+   * M.S. in Accountancy | College of Commerce, National Chengchi University (NCCU)
+   * B.A. in Public Finance | College of Social Sciences, National Chengchi University (NCCU)
+- **Interests**: 
+  * Listening to music (especially *K-POP*)
+  * Exploring new fields
+- **Goals**: Working hard to live, study, and launch my career in NYC.

@@ -1,4 +1,243 @@
 ---
-title: "Mini-Project Placeholder"
+title: "Mini-Project #01"
+subtitle: "STA 9750 Mini-Project 1"
+author: "Wen-Lan Cheng"
+date: last-modified
+date-format: "YYYY-MM-DD"
+format:
+  html:
+    theme: lumen
+    toc: false
+    code-fold: true
+    code-summary: "Show the code"
+    code-copy: hover
 ---
-This is a placeholder for STA9750 Mini-Project 1. Check back soon for more!
+# What We Watched: Exploring Netflix Viewing Data
+Netflix is a well-known streaming platform around the world. It has published a *What We Watched* report every six months starting in 2023 in order to provide more available and transparent information to the public. The latest report covers the first-half 2026.
+```{r, message=FALSE, warning=FALSE}
+#' Acquire Netflix What We Watched Reports
+#' 
+#' This function will acquire and standardize all data for MP#01
+#' from Netflix. Because Netflix hosts the data files behind a CDN, we
+#' are accessing the release pages and automatically extracting links to the
+#' relevant files (with CDN hash). 
+#' 
+#' After import, files are stacked vertically and some basic cleaning is
+#' performed. 
+load_netflix_data <- function(){
+  # Note to students: Make sure you have installed the tidyverse and fs packages
+  #                   before beginning this assignment. If you aren't sure,
+  #                   simply run `library(tidyverse)` at your R Console and, if
+  #                   you don't see an error message, `tidyverse` has been 
+  #                   installed. (Same for `fs`) If you still need to install
+  #                   either package, use the `install.packages` function as 
+  #                   demonstrated in class.
+  library(tidyverse)
+  library(rvest)
+  library(readxl)
+  library(fs)
+  
+  data_dir <- path("data", "mp01")
+    
+  if(!dir_exists(data_dir)){
+    dir_create(data_dir, showWarnings=FALSE, recurse=TRUE)
+  }
+  
+  NETFLIX_URLS <- list(
+    `2023H1` = "https://about.netflix.com/news/what-we-watched-a-netflix-engagement-report",
+    `2023H2` = "https://about.netflix.com/news/what-we-watched-the-second-half-of-2023",
+    `2024H1` = "https://about.netflix.com/news/what-we-watched-the-first-half-of-2024",
+    `2024H2` = "https://about.netflix.com/news/what-we-watched-the-second-half-of-2024",
+    `2025H1` = "https://about.netflix.com/news/what-we-watched-the-first-half-of-2025",
+    `2025H2` = "https://about.netflix.com/news/what-we-watched-the-second-half-of-2025",
+    `2026H1` = "https://about.netflix.com/news/what-we-watched-the-first-half-of-2026"
+  )
+  
+  download_if_needed <- function(url, local){
+    if(!file_exists(local)){
+      download.file(url, local, quiet = TRUE, mode = "wb")
+    }
+    
+    return(local)
+  }
+    
+  NETFLIX_URLS |> 
+    map(read_html) |> 
+    map(html_element, xpath = "//a[contains(@href, '.xlsx')]") |> 
+    map_chr(html_attr, "href") |> 
+    enframe("period", "url") |> 
+   mutate(path = path(data_dir, paste0(period, ".xlsx")), 
+          path = map2(url, path, download_if_needed), 
+          data = map(path, read_excel, skip=3, na="*"), 
+          data = map(data, \(x) x |> mutate(`Release Date` = as.Date(`Release Date`)))) |>
+    unnest(data) |> 
+    select(-url, -path) |> 
+    mutate(year=str_sub(period, 1, 4), 
+           half=str_sub(period, start=6), 
+           period_start = make_date(year, if_else(half==1, 1, 7), 1), 
+           period_end = make_date(year, if_else(half==1, 7, 12), if_else(half==1, 30, 31))) |> 
+    filter(!is.na(`Hours Viewed`)) |> 
+    mutate(live_event = !is.na(Runtime) & str_detect(Runtime, "\\d+:\\d+\\*"), 
+           clean_time = str_remove(Runtime, fixed("*")),
+           Runtime = 60 * hour(hm(clean_time)) + minute(hm(clean_time))) |>
+    select(-clean_time) |>
+    mutate(Runtime = coalesce(Runtime, mean(Runtime, na.rm=TRUE)), 
+           .by=Title, 
+           Title = stringi::stri_trans_general(Title, "Latin-ASCII"),
+           Title = str_remove(Title, " // .*"), 
+           Title = str_remove(Title, "[^[:ascii:]].*"), 
+           Title = str_trim(Title)) |>
+    filter_out(Title == "") |>
+    select(year, 
+           period, 
+           period_start, 
+           period_end, 
+           Title, 
+           -half, 
+           Runtime, 
+           Views, 
+           `Hours Viewed`, 
+           `Release Date`,
+           `Available Globally?`, 
+           live_event)
+}
+
+NETFLIX_DATA <- load_netflix_data()
+```
+
+To make data set look more readable and easier to manipulate, we use `rename` to get nice tidy column names. Then, we examine and describe the data set by using `glimps()` and `skimr` package.
+
+## Data Introduction
+`NETFLIX_DATA` has 61,892 rows and 11 columns. It contains four types of variables, which are *character*, *Date*, *logical*, and *numeric*.
+```{r, message=FALSE, warning=FALSE}
+NETFLIX_DATA <- load_netflix_data() |>
+  rename(
+    title = Title,
+    runtime = Runtime,
+    views = Views,
+    hours_viewed = `Hours Viewed`,
+    release_date = `Release Date`,
+    available_globally = `Available Globally?`
+  ) |>
+  mutate(
+    year = as.integer(year),
+    available_globally = (available_globally == "Yes")
+  )
+```
+
+## Missing Data
+The summary shows that there are **four** variables in `NETFLIX_DATA` contain missing values. `release_date` has the highest amount of missing data (35,251 entries), followed by `views` (18,198), `runtime` (13,085), and `available_globally` (2).
+```{r, message=FALSE, warning=FALSE}
+library(skimr)
+glimpse(NETFLIX_DATA)
+skim(NETFLIX_DATA)
+```
+
+## Exploratory Questions
+### Inline Value Questions
+We explore several interesting questions to analyze the data:
+
+
+1. What date range is covered by this data set?
+```{r, message=FALSE, warning=FALSE}
+library(scales)
+
+date_max <- max(NETFLIX_DATA$period_end)
+date_min <- min(NETFLIX_DATA$period_start)
+```
+  By using `min()` and `max()` on the period start and end dates, we found that the date range is from **`r date_min`** to **`r date_max`**.
+
+2. How many different shows and movies are covered in this data set?
+```{r, message=FALSE, warning=FALSE}
+n_title <- NETFLIX_DATA |>
+  distinct(title) |>
+  nrow()
+num_title <- comma(n_title)
+```
+  To count the number of the shows and movies, we use `distinct()` to make sure that each show and movie has only one record. Therefore, we can get the result that there are **`r num_title`** different shows and movies in this data set. 
+
+3. How many total hours have been spent watching shows from the Bridgerton universe?
+```{r, message=FALSE, warning=FALSE}
+hours <- NETFLIX_DATA |>
+  filter(str_detect(title, "Bridgerton")) |>
+  summarize(total = sum(hours_viewed, na.rm = TRUE)) |>
+  pull(total)
+```
+  After filtering the titles by `filter()` and summing the `hours_viewed`, the total viewing time for shows from the *Bridgerton universe* is **`r scales::comma(hours)`** hours.
+  
+4. How many total hours have been spent watching the five seasons of Stranger Things?
+```{r, message=FALSE, warning=FALSE}
+st_hours <- NETFLIX_DATA  |>
+  filter(str_detect(title, "Stranger Things"))  |>
+  filter_out(str_detect(title, "Beyond|Tales|Fireplace"))  |>
+  summarize(total = sum(hours_viewed, na.rm = TRUE))  |>
+  pull(total)
+```
+  Similar to the previous question, we use `filter()` and `summarize()` to find out the answer. The difference is that before calculating the total hours, we use `filter_out()` to *exclude* the behind-the-scenes show, the animated spin-off, and the background music. The total hours for watching the five seasons of Stranger Things is **`r scales::comma(st_hours)`** hours.
+  
+5. What percentage of total watch time was spent on the Top 10 titles of 2026H1?
+```{r, message=FALSE, warning=FALSE}
+view_time_2026 <- NETFLIX_DATA  |>
+  filter(period == "2026H1")
+thour_2026 <- sum(view_time_2026$hours_viewed, na.rm = TRUE)
+top_2026 <- view_time_2026  |>
+  slice_max(hours_viewed, n = 10, with_ties = FALSE)  |>
+  summarize(hours = sum(hours_viewed, na.rm = TRUE))  |>
+  pull(hours)
+per_time <- top_2026 / thour_2026
+percent_time <- percent(per_time, accuracy=0.01)
+```
+  We first use `filter()` to select the data in the first half of 2026. Then, we use ` slice_max()` to get the Top 10 titles and `sum()` to calculate the total hours for 2026H1 and Top 10 titles. We discovered that the percentage of total watch time spent on the Top 10 titles of 2026H1 is **`r percent_time`**.
+  
+6. What fraction of Netflix’s catalog is globally available?
+```{r, message=FALSE, warning=FALSE}
+global_share <- NETFLIX_DATA  |>
+  summarize(title_share = sum(available_globally == TRUE, na.rm = TRUE) / n(), hours_share = sum(hours_viewed[available_globally], na.rm = TRUE) / sum(hours_viewed, na.rm = TRUE))
+global_title_pct <- percent(global_share$title_share, accuracy=0.01)
+global_hours_pct <- percent(global_share$hours_share, accuracy=0.01)
+```
+  By using `summarize()` to calculate the share of globally available titles and their share of total viewing hours after removing missing data, it shows that there are **`r global_title_pct`** of shows and movies are globally available, and these titles account for **`r global_hours_pct`** of the total viewing hours in this data set.
+  
+### Further Questions
+To get a much closer look at the data, we use Tables to answer further questions that we found in this data set:
+
+1. What was the top title (by total hours viewed) in each period and what fraction of total viewership did it capture?
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(gt)
+
+table1_data <- NETFLIX_DATA |>
+  group_by(period) |>
+  mutate(total_period_hours = sum(hours_viewed, na.rm = TRUE)) |>
+  slice_max(order_by = hours_viewed, n = 1, with_ties = FALSE) |>
+  mutate(share = hours_viewed / total_period_hours) |>
+  select(period, title, hours_viewed, share) |>
+  ungroup()
+
+table1_data |>
+  gt() |>
+  tab_header(
+    title = "Top Netflix Title by Period",
+    subtitle = "Leading title and share of aggregate watch time per 6-month window"
+  ) |>
+  cols_label(
+    period = "Period",
+    title = "Top Title",
+    hours_viewed = "Hours Viewed",
+    share = "Share of Total Viewership"
+  ) |>
+  fmt_number(columns = hours_viewed, decimals = 0) |>
+  fmt_percent(columns = share, decimals = 2)
+```
+
+
+## Platform Strategy Memo
+
+
+
+
+::: {.callout-note title="AI Usage Statement" collapse="true"}
+
+Gemini was used to help write the code in this project, but all non-code text was generated without the use of any Generative AI tools. Additionally, Gemini was used to provide additional background information on the topic and to brainstorm ideas for the final open-ended prompt.
+
+:::

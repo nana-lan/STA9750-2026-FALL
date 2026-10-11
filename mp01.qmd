@@ -1,5 +1,5 @@
 ---
-title: "Mini-Project #01"
+title: "What We Watched: Exploring Netflix Viewing Data"
 subtitle: "STA 9750 Mini-Project 1"
 author: "Wen-Lan Cheng"
 date: last-modified
@@ -7,12 +7,16 @@ date-format: "YYYY-MM-DD"
 format:
   html:
     theme: lumen
-    toc: false
+    css: custom.css
+    toc: true               
+    toc-location: left     
+    toc-depth: 3          
+    smooth-scroll: true
     code-fold: true
     code-summary: "Show the code"
     code-copy: hover
 ---
-# What We Watched: Exploring Netflix Viewing Data
+
 Netflix is a well-known streaming platform around the world. It has published a *What We Watched* report every six months starting in 2023 in order to provide more available and transparent information to the public. The latest report covers the first-half 2026.
 ```{r, message=FALSE, warning=FALSE}
 #' Acquire Netflix What We Watched Reports
@@ -145,7 +149,7 @@ library(scales)
 date_max <- max(NETFLIX_DATA$period_end)
 date_min <- min(NETFLIX_DATA$period_start)
 ```
-  By using `min()` and `max()` on the period start and end dates, we found that the date range is from **`r date_min`** to **`r date_max`**.
+By using `min()` and `max()` on the period start and end dates, we found that the date range is from **`r date_min`** to **`r date_max`**.
 
 2. How many different shows and movies are covered in this data set?
 ```{r, message=FALSE, warning=FALSE}
@@ -154,7 +158,7 @@ n_title <- NETFLIX_DATA |>
   nrow()
 num_title <- comma(n_title)
 ```
-  To count the number of the shows and movies, we use `distinct()` to make sure that each show and movie has only one record. Therefore, we can get the result that there are **`r num_title`** different shows and movies in this data set. 
+To count the number of the shows and movies, we use `distinct()` to make sure that each show and movie has only one record. Therefore, we can get the result that there are **`r num_title`** different shows and movies in this data set. 
 
 3. How many total hours have been spent watching shows from the Bridgerton universe?
 ```{r, message=FALSE, warning=FALSE}
@@ -163,7 +167,7 @@ hours <- NETFLIX_DATA |>
   summarize(total = sum(hours_viewed, na.rm = TRUE)) |>
   pull(total)
 ```
-  After filtering the titles by `filter()` and summing the `hours_viewed`, the total viewing time for shows from the *Bridgerton universe* is **`r scales::comma(hours)`** hours.
+After filtering the titles by `filter()` and summing the `hours_viewed`, the total viewing time for shows from the *Bridgerton universe* is **`r scales::comma(hours)`** hours.
   
 4. How many total hours have been spent watching the five seasons of Stranger Things?
 ```{r, message=FALSE, warning=FALSE}
@@ -173,7 +177,7 @@ st_hours <- NETFLIX_DATA  |>
   summarize(total = sum(hours_viewed, na.rm = TRUE))  |>
   pull(total)
 ```
-  Similar to the previous question, we use `filter()` and `summarize()` to find out the answer. The difference is that before calculating the total hours, we use `filter_out()` to *exclude* the behind-the-scenes show, the animated spin-off, and the background music. The total hours for watching the five seasons of Stranger Things is **`r scales::comma(st_hours)`** hours.
+Similar to the previous question, we use `filter()` and `summarize()` to find out the answer. The difference is that before calculating the total hours, we use `filter_out()` to *exclude* the behind-the-scenes show, the animated spin-off, and the background music. The total hours for watching the five seasons of Stranger Things is **`r scales::comma(st_hours)`** hours.
   
 5. What percentage of total watch time was spent on the Top 10 titles of 2026H1?
 ```{r, message=FALSE, warning=FALSE}
@@ -187,7 +191,7 @@ top_2026 <- view_time_2026  |>
 per_time <- top_2026 / thour_2026
 percent_time <- percent(per_time, accuracy=0.01)
 ```
-  We first use `filter()` to select the data in the first half of 2026. Then, we use ` slice_max()` to get the Top 10 titles and `sum()` to calculate the total hours for 2026H1 and Top 10 titles. We discovered that the percentage of total watch time spent on the Top 10 titles of 2026H1 is **`r percent_time`**.
+We first use `filter()` to select the data in the first half of 2026. Then, we use ` slice_max()` to get the Top 10 titles and `sum()` to calculate the total hours for 2026H1 and Top 10 titles. We discovered that the percentage of total watch time spent on the Top 10 titles of 2026H1 is **`r percent_time`**.
   
 6. What fraction of Netflix’s catalog is globally available?
 ```{r, message=FALSE, warning=FALSE}
@@ -196,7 +200,7 @@ global_share <- NETFLIX_DATA  |>
 global_title_pct <- percent(global_share$title_share, accuracy=0.01)
 global_hours_pct <- percent(global_share$hours_share, accuracy=0.01)
 ```
-  By using `summarize()` to calculate the share of globally available titles and their share of total viewing hours after removing missing data, it shows that there are **`r global_title_pct`** of shows and movies are globally available, and these titles account for **`r global_hours_pct`** of the total viewing hours in this data set.
+By using `summarize()` to calculate the share of globally available titles and their share of total viewing hours after removing missing data, it shows that there are **`r global_title_pct`** of shows and movies are globally available, and these titles account for **`r global_hours_pct`** of the total viewing hours in this data set.
   
 ### Further Questions
 To get a much closer look at the data, we use Tables to answer further questions that we found in this data set:
@@ -224,15 +228,169 @@ table1_data |>
     period = "Period",
     title = "Top Title",
     hours_viewed = "Hours Viewed",
-    share = "Share of Total Viewership"
+    share = "Fraction of total viewership"
   ) |>
   fmt_number(columns = hours_viewed, decimals = 0) |>
   fmt_percent(columns = share, decimals = 2)
 ```
+To calculate the percentage for each period, we grouped the data by `period`, used `mutate()` to create a new column for total viewed hours within each period, and used `slice_max()` to identify the title with the highest viewership.
 
+The fraction of total viewership was calculated by dividing the Top title’s hours viewed by the total hours viewed in the same period. As shown in the table, the top title captured only around 0.87% to 1.35% of total viewing time in each period, and *Squid Game: Season 2* was the only one that ranked at the Top in two consecutive periods. 
+
+2. How has Netflix’s catalog changed in size over the periods for which we have questions?
+```{r, message=FALSE, warning=FALSE}
+catalog_evolution <- NETFLIX_DATA |>
+  group_by(period) |>
+  summarize(
+    total_titles = n_distinct(title),
+    total_runtime_hours = sum(runtime, na.rm = TRUE) / 60
+  ) |>
+  ungroup()
+
+catalog_evolution |>
+  gt() |>
+  tab_header(
+    title = "Netflix Catalog Size Changed by Period",
+    subtitle = "Number of unique titles and cumulative runtime per 6-month period"
+  ) |>
+  cols_label(
+    period = "Period",
+    total_titles = "Total Titles",
+    total_runtime_hours = "Total Runtime (Hours)"
+  ) |>
+  fmt_number(columns = c(total_titles, total_runtime_hours), decimals = 0)
+```
+To examine how Netflix's catalog changed over time, we grouped the data by `period` and used `summarize()` to compute `n_distinct(title)` (the number of unique titles) and `runtime` (the total catalog runtime converted into hours).
+
+The table shows an unusual pattern in 2023H1: it had *the largest number of unique titles* but *the lowest total catalog runtime*. From 2023H2 to 2026H1, however, both the number of titles and total runtime **increased steadily**. The catalog grew from 6,574 titles and 50,117 hours in 2023H2 to 8,163 titles and 62,855 hours in 2026H1, which means that Netflix generally expanded over time in *both* the number of available titles and the total amount of catalog runtime. 
+
+3. Which titles have had the most consistently high viewership across all periods?
+```{r, message=FALSE, warning=FALSE}
+n_periods <- n_distinct(NETFLIX_DATA$period)
+
+staple_titles <- NETFLIX_DATA |>
+  group_by(title) |>
+  summarize(
+    periods_present = n_distinct(period),
+    avg_hours = mean(hours_viewed, na.rm = TRUE),
+    sd_hours = sd(hours_viewed, na.rm = TRUE)
+  ) |>
+  filter(periods_present == n_periods) |>
+  mutate(cv = sd_hours / avg_hours) |>
+  filter(avg_hours >= quantile(avg_hours, 0.75, na.rm = TRUE)) |>
+  arrange(cv) |>
+  slice_head(n = 8)
+
+staple_titles |>
+  gt() |>
+  tab_header(
+    title = "Top Consistent Titles Across Periods",
+    subtitle = "Titles maintaining steady high viewership across all reporting periods"
+  ) |>
+  cols_label(
+    title = "Title",
+    avg_hours = "Avg. Hours Viewed",
+    sd_hours = "Std. Deviation",
+    cv = "Coefficient of Variation"
+  ) |>
+  cols_hide(columns = periods_present) |>
+  fmt_number(columns = c(avg_hours, sd_hours), decimals = 0) |>
+  fmt_percent(columns = cv, decimals = 1)
+```
+There are `r n_periods` in Netflix's data set. To identify titles with consistently high viewership across all periods, we used `summarize()` to calculate the number of periods in which each title appeared and `filter()` to keep only titles that appeared in every period. We also computed each title's average viewing hours (`avg_hours`) and standard deviation (`sd_hours`). As we known, the lower `cv` means more stable of the viewership, so we divided `sd_hours`by `avg_hours` to calculate coefficient of variation (`cv`).
+
+After selecting the top 25% titles based on average viewing hours and ranking the stability by `arange(cv)`, the result shows that the several seasons of *Superstore* have low `cv`, ranging from 4.3%~5.4%, indicating relatively stable viewership across periods. *The Seven Deadly Sins* has the highest `avg_hours` among this table, but it is less stable than than the *Superstore* seasons and *BoJack Horseman: Season 1*.
+
+4. Within each period, what fraction of time was spent on ‘shows’ vs movies?
+```{r, message=FALSE, warning=FALSE}
+show_movie_share <- NETFLIX_DATA |>
+  mutate(
+    content_type = case_when(
+      str_detect(title, regex("season|series", ignore_case = TRUE)) ~ "Show",
+      runtime > 240 ~ "Show",
+      !is.na(runtime) ~ "Movie",
+      TRUE ~ "Unknown"
+    )
+  ) |>
+  group_by(period, content_type) |>
+  summarize(total_hours_viewed = sum(hours_viewed, na.rm = TRUE)) |>
+  group_by(period) |>
+  mutate(share = total_hours_viewed / sum(total_hours_viewed)) |>
+  ungroup() |>
+  select(period, content_type, share) |>
+  pivot_wider(names_from = content_type, values_from = share, values_fill = 0)
+
+show_movie_share |>
+  gt() |>
+  tab_header(
+    title = "Share of Viewing Time: Shows vs. Movies",
+    subtitle = "Classified by title keywords or runtime exceeding 240 minutes"
+  ) |>
+  cols_label(
+    period = "Period",
+    Show = "Shows",
+    Movie = "Movies"
+  ) |>
+  fmt_percent(columns = where(is.numeric), decimals = 1)
+```
+Unfortunately, our data does not clearly delineate shows from movies. To separate all titles into two categories, we classified a title as a show if its runtime was over 4 hours (240 minutes) or if the title contained the word “Season” or "Series". We then summed the total viewing hours for shows and movies within each period and divided each category's viewing hours by the total viewing hours in that period to calculate its fraction of viewing time. It is worth noting that, **some titles miss the data of runtime and without the word "Season" or "Series"**. This problem is more obvious during 2023H1. In order not to separate those titles into wrong categories, we set another `content_type` called **Unknown**.
+
+As we can see, except for 2023H1, which has a relatively high proportion of *Unknown*, the fraction of *Unknown* is below 2% in other periods. Looking closer at the result of Movies and Shows, we can see that most viewing time was classified as Shows. Even though 2023H1 has a relatively low combined share of viewing time classified as Shows or Movies, the share of Shows is still much higher than that of Movies. From 2023H2 to 2026H1, the share of viewing time for Shows ranges from **96.1%** to **97.6%**, showing relatively little variation across periods.
+
+5. How does the performance of live events compare to pre-taped content? Does the average live event draw more viewership than an average piece of pre-taped content? How about a ‘top tier’ live event vs ‘top tier’ pre-taped content?
+```{r, message=FALSE, warning=FALSE}
+live_vs_pretaped <- NETFLIX_DATA |>
+  mutate(performance_type = if_else(live_event, "Live Event", "Pre-taped Content")) |>
+  group_by(performance_type) |>
+  summarize(
+    count = n(),
+    avg_hours = mean(hours_viewed, na.rm = TRUE),
+    median_hours = median(hours_viewed, na.rm = TRUE),
+    top_tier_avg = mean(hours_viewed[hours_viewed >= quantile(hours_viewed, 0.95, na.rm = TRUE)], na.rm = TRUE)
+  )
+
+live_vs_pretaped |>
+  gt() |>
+  tab_header(
+    title = "Performance: Live Events vs. Pre-taped Content",
+    subtitle = "Comparison of average, median, and top 5% viewership"
+  ) |>
+  cols_label(
+    performance_type = "Performance Format",
+    count = "Title Count",
+    avg_hours = "Mean Hours",
+    median_hours = "Median Hours",
+    top_tier_avg = "Top 5% Mean Hours"
+  ) |>
+  fmt_number(columns = c(count, avg_hours, median_hours, top_tier_avg), decimals = 0)
+```
+To compare live events with pre-taped content, we separated titles into two groups based on the `live_event` variable. Then, we calculated the number of titles (`count`), average viewing hours (`avg_hours`), and median viewing hours (`median_hours`) for each group. We also defined the **top 5% of titles** as top-tier content (`top_tier_avg`) and calculated their average viewing hours to compare the performance of the best-performing content in each group.
+
+The result shows that **pre-taped content generally has better viewing performance than live events**. The average viewing hours of live events are about 3.56 million hours, compared with about 8.29 million hours for pre-taped content. However, the median viewing hours of these two content types are very similar, and the difference between mean and median is much greater in  pre-taped content. This huge gap can partly be explained by `top_tier_avg`. For the top 5% of content, the average viewing hours are about 26.1 million for top-tier live events and 80.4 million for top-tier pre-taped content, indicating that some highly viewed pre-taped titles may increase its average.
 
 ## Platform Strategy Memo
+```{r}
+# Big hits
+min_top_share <- min(table1_data$share)
+max_top_share <- max(table1_data$share)
 
+# Shows vs Movies
+show_range <- show_movie_share |>
+  filter(period != "2023H1") |>
+  summarize(
+    min_show_share = min(Show),
+    max_show_share = max(Show)
+  )
+
+# Live vs Pre-taped
+live_avg <- live_vs_pretaped |>
+  filter(performance_type == "Live Event") |>
+  pull(avg_hours)
+
+pretaped_avg <- live_vs_pretaped |>
+  filter(performance_type == "Pre-taped Content") |>
+  pull(avg_hours)
+```
 
 
 

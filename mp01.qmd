@@ -371,28 +371,87 @@ The result shows that **pre-taped content generally has better viewing performan
 ## Platform Strategy Memo
 ```{r}
 # Big hits
-min_top_share <- min(table1_data$share)
-max_top_share <- max(table1_data$share)
+library(dplyr)
+big_hit_range <- NETFLIX_DATA |>
+  group_by(period) |>
+  mutate(total_period_hours = sum(hours_viewed, na.rm = TRUE)) |>
+  slice_max(order_by = hours_viewed, n = 1, with_ties = FALSE) |>
+  mutate(share = hours_viewed / total_period_hours) |>
+  summarize(min_top_share = min(share), max_top_share = max(share)) |>
+  ungroup()
+
+min_top_share <- min(big_hit_range$min_top_share, na.rm = TRUE)
+max_top_share <- max(big_hit_range$max_top_share, na.rm = TRUE)
+
+library(scales)
+per_min <- percent(min_top_share, accuracy = 0.01)
+per_max <- percent(max_top_share, accuracy = 0.01)
 
 # Shows vs Movies
+library(tidyverse)
+library(scales)
+
+show_movie_share <- NETFLIX_DATA |>
+  mutate(
+    content_type = case_when(
+      str_detect(title, regex("season|series", ignore_case = TRUE)) ~ "Show",
+      runtime > 240 ~ "Show",
+      !is.na(runtime) ~ "Movie",
+      TRUE ~ "Unknown"
+    )
+  ) |>
+  group_by(period, content_type) |>
+  summarize(total_hours_viewed = sum(hours_viewed, na.rm = TRUE), .groups = "drop_last") |>
+  mutate(share = total_hours_viewed / sum(total_hours_viewed)) |>
+  ungroup() |>
+  select(period, content_type, share) |>
+  pivot_wider(names_from = content_type, values_from = share, values_fill = 0)
+
 show_range <- show_movie_share |>
   filter(period != "2023H1") |>
   summarize(
-    min_show_share = min(Show),
-    max_show_share = max(Show)
+    min_show_share = min(Show, na.rm = TRUE),
+    max_show_share = max(Show, na.rm = TRUE)
   )
 
+min_show_val <- show_range$min_show_share
+max_show_val <- show_range$max_show_share
+
+per_min_show <- percent(min_show_val, accuracy = 0.01)
+per_max_show <- percent(max_show_val, accuracy = 0.01)
+
+remain_val   <- 1 - min_show_val
+remain_share <- percent(remain_val, accuracy = 0.01)
+
 # Live vs Pre-taped
-live_avg <- live_vs_pretaped |>
+live_vs_pretaped <- NETFLIX_DATA |>
+  mutate(performance_type = if_else(live_event, "Live Event", "Pre-taped Content")) |>
+  group_by(performance_type) |>
+  summarize(
+    count = n(),
+    avg_hours = mean(hours_viewed, na.rm = TRUE),
+    median_hours = median(hours_viewed, na.rm = TRUE),
+    top_tier_avg = mean(hours_viewed[hours_viewed >= quantile(hours_viewed, 0.95, na.rm = TRUE)], na.rm = TRUE)
+  )
+
+live_value <- live_vs_pretaped |>
   filter(performance_type == "Live Event") |>
-  pull(avg_hours)
+  select(avg_hours, median_hours)
 
-pretaped_avg <- live_vs_pretaped |>
+pretaped_value <- live_vs_pretaped |>
   filter(performance_type == "Pre-taped Content") |>
-  pull(avg_hours)
+  select(avg_hours, median_hours)
 ```
+### Suggestions for Netflix's future develop path
+To provide useful and specific suggestions for Netflix's content strategy in 2027 and further periods, we **analyzed the data set from 2023H1 to 2026H1**. Based on the viewing data across the entire data period, we recommend that Netflix keep focusing on shows and maintain diverse content catalog instead of putting too much resources into a small number of big-hit works. In addition, pre-taped content would be better to be regarded as a main-focused part in their strategy.
 
+First of all, Netflix should not only focus on a few big-hit shows or movies. Although there is the most popular title with the highest viewing hours in each period, the top title **only accounts for `r per_min` to `r per_max` of total viewing hours**, which is a small fraction of total viewership. It also means that the remaining titles still contribute the majority of viewing hours. Therefore, we suggest that Netflix should put more effort on **maintaining a diverse catalog**, especially those evergreen works, while promoting big-hit shows or movies in the future. By doing so, it can attract and cater to more viewers with different preference and increase the total viewing hours.
 
+Comparing shows and movies, we also recommend that Netflix should pay more attention to shows, such as seasons or series. Despite of the limitation of the data set, we cannot obtain sufficient information to classify all titles into two category accurately, especially in *2023H1*, which has more missing runtime data. To reduce the influence of this problem, we excluded 2023H1 from this comparison and used keywords of title and runtime to categorize the remaining titles. We noticed that **the category of *Show* accounts for `r per_min_show` to `r per_max_show` of total viewing time**, which is a very high percentage. The remain percentage, including *Movies* and *Unknown*, is no more than `r remain_share`, and this trend is relatively stable across periods. This result shows that viewers tend to spend much more time on show under our classification. Therefore, Netflix should **continue investing in shows**, especially series that can continue for multiple seasons.
+
+Last but not least, the live events may be more suitable as a complementary part of Netflix's content strategy. The average viewing hours of live events are about `r round(live_value$avg_hours / 1e6, 2)` million hours, compared with about `r round(pretaped_value$avg_hours / 1e6, 2)` million hours for pre-taped content. However, the median viewing hours of these two content types are very similar, and the difference between mean and median is much greater in  pre-taped content. This huge gap may be caused by **some highly viewed pre-taped titles among the data set**, which pull up the overall average of pre-taped content. This is an important sign for Netflix while designing their future strategy. Even though both content types are important, we still suggest Netflix to **continue prioritizing pre-taped content** while using live events as a complementary option.
+
+To sum up, Netflix's future strategy should balance strong-performing content with a diverse catalog. No matter what type of content it is, the company should not rely heavily on a small groups of content that have relatively high viewing hours. For more sustainable and consistent growth, it would be better for the company to maintain a variety of content types to attract different groups of viewers.
 
 ::: {.callout-note title="AI Usage Statement" collapse="true"}
 

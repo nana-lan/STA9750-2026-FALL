@@ -10,6 +10,15 @@ website:
   navbar:
     background: primary
     search: false
+    left:
+      - href: mp01.qmd
+        text: "Mini-Project 1"
+      - href: mp02.qmd
+        text: "Mini-Project 2"
+      - href: mp03.qmd
+        text: "Mini-Project 3"
+      - href: mp04.qmd
+        text: "Mini-Project 4"
   page-footer:
     right: "Last updated on {{< meta date-modified >}}"
     

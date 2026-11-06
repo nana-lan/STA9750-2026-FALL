@@ -854,3 +854,5 @@ Congratulations to the winners! However, this is just the beginning. To combat t
 ::: {.callout-note title="AI Usage Statement" collapse="true"}
 
 ChatGPT was used to help write the code in this project, but all non-code text was generated without the use of any Generative AI tools. Additionally, ChatGPT was used to provide additional background information on the topic and to brainstorm ideas for the final open-ended prompt.
+
+:::

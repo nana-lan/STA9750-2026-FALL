@@ -557,7 +557,7 @@ agency_full <- NTD_ENERGY |>
   left_join(EIA_SEP_REPORT |>
       select(abbreviation, CO2_MWh), by = c("state" = "abbreviation"))
 ```
-First, we created a lookup table between each transit agency and its state using `NTD_ID` from `NTD_SERVICE`, and then used `NTD ID` to add the state information to the energy consumption data in `NTD_ENERGY`. Next, we joined the state-level electricity carbon intensity data from the U.S. Energy Information Administration (`EIA_SEP_REPORT`). The final table includes one row for each Agency + Mode pair, along with its state, all fuel consumption data, and the corresponding `CO2_MWh`.
+First, we `mutate()` a column in `NTD_ENERGY` to make the width of `NTD ID` correspond with 5 number and `left_join()` with `NTD_SERVICE`, and then we joined the state-level electricity carbon intensity data from the U.S. Energy Information Administration (`EIA_SEP_REPORT`). The final table includes one row for each Agency + Mode pair, along with its state, all fuel consumption data, and the corresponding `CO2_MWh`.
 ```{r, message=FALSE, warning=FALSE}
 agency_emissions <- agency_full |>
   mutate(
@@ -588,10 +588,21 @@ agency_emissions <- agency_full |>
 
     emissions_elec_batt =
       replace_na(`Kilowatt hours of Electric Battery`, 0) /
-      1000 * CO2_MWh * 0.453592
+      1000 * CO2_MWh * 0.453592,
+    
+    total_emissions_kg =
+      emissions_diesel +
+      emissions_gasoline +
+      emissions_kerosene +
+      emissions_lpg +
+      emissions_bunker +
+      emissions_cng +
+      emissions_lng +
+      emissions_elec_prop +
+      emissions_elec_batt
   )
 ```
-To calculate total carbon emissions, we **multiplied the consumption of fuels such as diesel and gasoline by their corresponding CO2 emission factors**. For example, diesel produces about 10.19 kg of CO2 per gallon. For electricity, we first converted electricity use from kWh to MWh and then multiplied it by the electricity carbon intensity of the state. Finally, emissions from different energy sources were added together to estimate the total CO2 emissions for each Agency + Mode pair.
+To calculate total carbon emissions, we **multiplied the consumption of fuels such as diesel and gasoline by their corresponding CO2 emission factors**. For example, diesel produces about 10.19 kg of CO2 per gallon. For electricity, we first converted electricity use from kWh to MWh and then multiplied it by the electricity carbon intensity of the state. Finally, emissions from different energy sources were added together to estimate the `total_emissions_kg` for each Agency + Mode pair.
 ```{r, message=FALSE, warning=FALSE}
 emissions_table <- agency_full |>
   select(
@@ -628,24 +639,7 @@ However, total emissions alone cannot fairly reflect the environmental performan
 - **Emissions per UPT**: measures the average emissions generated for each unlinked passenger trip.
 - **Emissions per Passenger Mile**: measures the emissions generated for carrying one passenger for one mile.
 ```{r, message=FALSE, warning=FALSE}
-agency_emissions <- agency_emissions |>
-  mutate(
-    total_emissions_kg =
-      replace_na(emissions_diesel, 0) +
-      replace_na(emissions_gasoline, 0) +
-      replace_na(emissions_kerosene, 0) +
-      replace_na(emissions_lpg, 0) +
-      replace_na(emissions_elec_prop, 0) + 
-      replace_na(emissions_elec_batt, 0)
-  )
-
-agency_emissions |>
-  select(
-    `Agency Name`,
-    Mode,
-    total_emissions_kg
-  ) |>
-  slice_head(n = 10)
+library(tidyverse)
 
 agency_total_emissions <- agency_emissions |>
   group_by(`NTD ID`, `Agency Name`, state) |>
@@ -661,63 +655,202 @@ agency_service_summary <- NTD_SERVICE |>
     total_passenger_miles = sum(sum_passenger_miles, na.rm = TRUE),
     .groups = "drop"
   )
-```
-To make the table neater and clearer, we used `slice_head()` and presented only the first 10 rows in this table. This table presents the total emissions of each transit agency under different operating modes.
 
-Taking **King County** as an example, the agency operates several transit modes. Among them, **Bus** generated the highest total emissions at approximately **94.36 million kg of CO2**, followed by **Demand Response** at about **11.04 million kg**. In contrast, Streetcar Rail, Ferryboat, and Trolleybus had much lower total emissions. The table also shows that the listed modes from **Spokane Transit Authority** and **Pierce County Transportation Benefit Area Authority** had **lower** total emissions than King County Bus.
-```{r, message=FALSE, warning=FALSE}
 agency_efficiency <- agency_total_emissions |>
-  inner_join(
-    agency_service_summary,
-    by = c("NTD ID" = "NTD_ID", "state" = "state")
+  inner_join(agency_service_summary, by = c("NTD ID" = "NTD_ID", "state" = "state")) |>
+  mutate(
+    emissions_per_upt = total_emissions_kg / total_upt,
+    emissions_per_passenger_mile = total_emissions_kg / total_passenger_miles
   )
 
-agency_efficiency <- agency_efficiency |>
+agency_categorized <- agency_efficiency |>
+  filter(total_upt > 10000) |> 
   mutate(
-    emissions_per_upt =
-      total_emissions_kg / total_upt)
+    size_category = case_when(
+      total_upt > quantile(total_upt, 0.75, na.rm = TRUE) ~ "Large",
+      total_upt > quantile(total_upt, 0.25, na.rm = TRUE) ~ "Medium",
+      TRUE ~ "Small"
+    )
+  )
 
-agency_efficiency |>
-  filter(total_upt > 0) |>
-  arrange(emissions_per_upt) |>
-  select(
-    `Agency Name`,
-    state,
-    emissions_per_upt
-  ) |>
+agency_categorized |>
+  select(`Agency Name`, state, size_category, emissions_per_upt, emissions_per_passenger_mile) |>
   slice_head(n = 10)
 ```
-We further analyzed the transit agencies by using the **Emissions per UPT** metric and selected the 10 agencies with the lowest emissions per UPT.
-
-The top four agencies, including Mid Mon Valley Transit Authority and Southern California Regional Rail Authority, have an `emissions_per_upt` value of 0. These zero values may be caused by zero-emission energy use, missing energy records, or some fuel types that were not fully included in our calculation.
-
-After excluding the zero values, **City of Culver City** (about 0.00496 kg CO2/UPT) and **Foothill Transit** (about 0.01078 kg CO2/UPT) have the lowest emissions per passenger trip among the agencies shown.
+This initial summary table demonstrates the output of our data pipeline: after aggregating cross-mode emissions to the agency level and `inner_join()` two data sets together, we calculated both `emissions_per_upt` and `emissions_per_passenger_mile`, alongside establishing scale tiers (`size_category`) based on `total_upt`.
 ```{r, message=FALSE, warning=FALSE}
-agency_efficiency <- agency_total_emissions |>
-  inner_join(
-    agency_service_summary,
-    by = c("NTD ID" = "NTD_ID", "state" = "state")
-  )
-
-agency_efficiency <- agency_efficiency |>
-  mutate(
-    emissions_per_passenger_mile =
-      total_emissions_kg / total_passenger_miles
-  )
-agency_efficiency |>
-  filter(total_passenger_miles > 0) |>
-  arrange(emissions_per_passenger_mile) |>
+top_efficient_by_size <- agency_categorized |>
+  group_by(size_category) |>
+  slice_min(emissions_per_upt, n = 3) |>
   select(
+    size_category,
     `Agency Name`,
     state,
+    emissions_per_upt,
     emissions_per_passenger_mile
   ) |>
-  slice_head(n = 10)
+  arrange(size_category, emissions_per_upt)
+
+top_efficient_by_size
 ```
-We also calculated the efficiency of each transit agency by using **Emissions per Passenger Mile** and selected the 10 agencies with the lowest emissions.
+We then `slice_min()` 3 agencies in each `size_category`. We noticed that several Large and Medium agencies have values of 0 under our current emissions calculation method. Therefore, these agencies have the lowest calculated emissions in their size categories, although a value of 0 does not necessarily mean that the agency has completely zero carbon emissions.
 
-Similarly, the top four agencies, including Mid Mon Valley Transit Authority and Southern California Regional Rail Authority, have an `emissions_per_passenger_mile` value of 0. These zero values may be caused by zero-emission energy use, missing energy records, or some fuel types that were not fully included in our calculation.
-
-After excluding the zero values, **City of Culver City** (about 0.00148 kg CO2 per passenger mile) and **Foothill Transit** (about 0.00180 kg CO2 per passenger mile) had the lowest emissions among the agencies shown.
+For the Small category, **McKinney Avenue Transit Authority** has the lowest `emissions_per_upt` and also the lowest finite `emissions_per_passenger_mile` among the agencies shown. **County of Kern** has an infinite value for `emissions_per_passenger_mile`, which indicates that its passenger-mile value was zero and this metric could not be calculated properly.
 
 ### Determine the winners of the GTA IV awards
+With the above analysis, we can determine the winners of the GTA IV awards. Here we chose two prize for this awards: **Greenest Transit Agency** and **Highest Fleet Electrification Rate**. In *Press Release* section, we will announce the winner of these two prizes, explain and show the table or graph to the public.
+
+## Press Release
+NEW YORK, NY — Green Transit Alliance (GTA)
+
+Public transit is key to reducing transport emissions in the US, but different systems have different environmental impacts depending on their energy sources, passenger capacity, and service efficiency. To look into this, the Green Transit Alliance (GTA)—a simulated advocacy group created for academic research—analyzed 2025 data from the FTA and EIA. By comparing carbon efficiency and electric energy use across 163 eligible transit agencies, GTA announces two environmental awards.
+
+- Prize 1: Greenest Transit Agency
+
+We selected the agency with the lowest `emissions_per_upt` and `emission_per_passenger_mile` in each `size_category`. We kept these agencies in the ranking because the zero values may represent very low or zero calculated emissions. However, a value of 0 does not necessarily mean that the agency is completely zero-emission, since it may also be affected by the available energy records and our emission conversion assumptions.
+Both calculations are shown below:
+
+$$
+\text{Emissions per UPT}
+=
+\frac{\text{Total CO}_2\text{ Emissions (kg)}}{\text{Total UPT}}
+$$
+$$
+\text{Emissions per Passenger Mile}
+=
+\frac{\text{Total CO}_2\text{ Emissions (kg)}}{\text{Total Passenger Miles}}
+$$
+
+```{r, message=FALSE, warning=FALSE}
+greenest_winners <- agency_categorized |>
+  group_by(size_category) |>
+  slice_min(emissions_per_upt, n = 1) |>
+  select(
+    size_category,
+    `Agency Name`,
+    state,
+    total_upt,
+    emissions_per_upt,
+    emissions_per_passenger_mile
+  )
+greenest_winners |>
+  ungroup() |>
+  gt::gt() |>
+  gt::cols_label(
+    size_category = "Agency Size",
+    `Agency Name` = "Agency",
+    state = "State",
+    total_upt = "Total UPT",
+    emissions_per_upt = "Emissions per UPT",
+    emissions_per_passenger_mile = "Emissions per Passenger Mile"
+  ) |>
+  gt::fmt_number(
+    columns = total_upt,
+    decimals = 0,
+    use_seps = TRUE
+  ) |>
+  gt::fmt_number(
+    columns = c(
+      emissions_per_upt,
+      emissions_per_passenger_mile
+    ),
+    decimals = 3
+  ) |>
+  gt::tab_header(
+    title = "2025 Greenest Transit Agency Award",
+    subtitle = "Lowest calculated emissions per UPT by agency size"
+  )
+```
+For the Large category, *Washington Metropolitan Area Transit Authority*, *Alternativa de Transporte Integrado*, and *Southern California Regional Rail Authority* all have the lowest calculated `emissions_per_upt`. In the Medium category, four agencies share the lowest value, while *McKinney Avenue Transit Authority* is the winner in the Small category.
+
+- Prize 2: Highest Fleet Electrification Rate
+```{r, message=FALSE, warning=FALSE}
+agency_electrification <- agency_full |>
+  group_by(`NTD ID`, `Agency Name`, state) |>
+  summarize(
+    electric_gge =
+      sum(
+        replace_na(`Kilowatt hours of Electric Propulsion`, 0) +
+        replace_na(`Kilowatt hours of Electric Battery`, 0),
+        na.rm = TRUE
+      ) * 0.030,
+
+    gasoline_gge =
+      sum(replace_na(`Gallons of Gasoline`, 0), na.rm = TRUE),
+
+    diesel_gge =
+      sum(replace_na(`Gallons of Diesel Fuel`, 0), na.rm = TRUE) * 1.12,
+
+    biodiesel_gge =
+      sum(replace_na(`Gallons of Bio-Diesel`, 0), na.rm = TRUE) * 1.05,
+
+    lpg_gge =
+      sum(replace_na(`Gallons of Liquified Petroleum Gas`, 0), na.rm = TRUE) * 0.74,
+
+    hydrogen_gge =
+      sum(replace_na(`Kilograms of Hydrogen`, 0), na.rm = TRUE) * 1.00,
+
+    cng_gge =
+      sum(replace_na(`Gallons of Compressed Natural Gas`, 0), na.rm = TRUE),
+
+    .groups = "drop"
+  ) |>
+  mutate(
+    total_gge =
+      electric_gge +
+      gasoline_gge +
+      diesel_gge +
+      biodiesel_gge +
+      lpg_gge +
+      hydrogen_gge +
+      cng_gge,
+
+    electrification_rate =
+      electric_gge / total_gge
+  ) |>
+  filter(total_gge > 0)
+
+electrification_winners <- agency_electrification |>
+  slice_max(
+    electric_gge,
+    n = 3,
+    with_ties = FALSE
+  )
+```
+We first converted different fuel types into the same energy unit, and then summed the energy use of all transit modes for each agency. Next, we calculated the electrification rate by dividing `electric_gge` by `total_gge`, which shows the percentage of total energy use that comes from electricity. Finally, we selected the three agencies with the highest electrification rates.
+```{r, message=FALSE, warning=FALSE}
+electrification_winners |>
+  mutate(
+    agency_label = stringr::str_wrap(`Agency Name`, width = 30),
+    agency_label = forcats::fct_reorder(agency_label, electric_gge)
+  ) |>
+  ggplot(aes(x = electric_gge, y = agency_label)) +
+  geom_col(fill = "darkseagreen3") +
+  geom_text(
+    aes(label = scales::comma(round(electric_gge, 0))),
+    hjust = -0.1,
+    size = 4
+  ) +
+  scale_x_continuous(
+    labels = scales::comma,
+    expand = expansion(mult = c(0, 0.15))
+  ) +
+  labs(
+    title = "2025 Highest Electric Energy Use",
+    subtitle = "Top 3 transit agencies ranked by electricity use in GGE",
+    x = "Electric Energy Use (GGE)",
+    y = "Agency"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.major.y = element_blank()
+  )
+```
+The result shows that **City of Seattle**, **City of Portland**, and **Port Authority Transit Corporation** have the highest electric energy use. In our calculation, their reported energy use comes entirely from electricity, and their calculated electrification rates all reach 100%.
+
+Congratulations to the winners! However, this is just the beginning. To combat the greenhouse effect and create a more sustainable future, we must continue optimizing our transit systems and maximizing green transportation nationwide. Looking forward, the GTA recommends that transit agencies upgrade aging fleets, adopt electric vehicles, transition to cleaner energy sources, and invest in renewable electricity. We fully support this vision.
+
+::: {.callout-note title="AI Usage Statement" collapse="true"}
+
+ChatGPT was used to help write the code in this project, but all non-code text was generated without the use of any Generative AI tools. Additionally, ChatGPT was used to provide additional background information on the topic and to brainstorm ideas for the final open-ended prompt.

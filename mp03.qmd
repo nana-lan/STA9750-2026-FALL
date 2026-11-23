@@ -1,4 +1,934 @@
 ---
-title: "Mini-Project Placeholder"
+title: "Where My People At?"
+subtitle: "STA 9750 Mini-Project 3"
+author: "Wen-Lan Cheng"
+date: last-modified
+date-format: "YYYY-MM-DD"
+format:
+  html:
+    theme: lumen
+    css: custom.css
+    toc: true               
+    toc-location: left     
+    toc-depth: 3          
+    smooth-scroll: true
+    code-fold: true
+    code-summary: "Show the code"
+    code-copy: hover
 ---
-This is a placeholder for STA9750 Mini-Project 3. Check back soon for more!
+The U.S. is the most international country on the world. People from different countries shape the unique and special small world here. American Community Survey (ACS), the long-running premier national survey conducted by the US Census Bureau, has collected and released data across a range of granularities and provided a up-to-date picture of the American public.
+
+Those data set are helpful for us to better understand how population density and demographic concentration relate to residential density in NYC. Before doing any analyze, we need to acquire every data set and clean them until they are prepared to go to next step.
+
+## Data Acquisition
+```{r, message=FALSE, warning=FALSE}
+#| code-summary: "Acquiring CBSA Population data set"
+
+library(tidycensus)
+library(dplyr)
+library(readr)
+
+if (!dir.exists("data/mp03")) {
+  dir.create("data/mp03", recursive = TRUE)
+}
+
+cbsa_file <- "data/mp03/cbsa_all_groups_2025.csv"
+
+if (!file.exists(cbsa_file)) {
+  cbsa_total <- get_acs(
+    geography = "cbsa",
+    variables = c(total_pop = "B01003_001"),
+    year = 2025,
+    survey = "acs1",
+    geometry = FALSE
+  ) |>
+    select(GEOID, NAME, total_pop = estimate)
+
+  cbsa_asian <- get_acs(
+    geography = "cbsa", table = "B02018",
+    year = 2025, survey = "acs1", geometry = FALSE
+  ) |>
+    mutate(table_id = "B02018")
+
+  cbsa_european <- get_acs(
+    geography = "cbsa", table = "B04006",
+    year = 2025, survey = "acs1", geometry = FALSE
+  ) |>
+    mutate(table_id = "B04006")
+
+  cbsa_latino <- get_acs(
+    geography = "cbsa", table = "B03001",
+    year = 2025, survey = "acs1", geometry = FALSE
+  ) |>
+    mutate(table_id = "B03001")
+
+  cbsa_combined <- bind_rows(cbsa_asian, cbsa_european, cbsa_latino) |>
+    left_join(cbsa_total |> select(GEOID, total_pop), by = "GEOID")
+
+  write_csv(cbsa_combined, cbsa_file)
+}
+
+cbsa_data <- read_csv(cbsa_file, show_col_types = FALSE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+#| code-summary: "Acquiring NYC Tract Population data set"
+
+library(tidycensus)
+library(dplyr)
+library(sf)
+
+if (!dir.exists("data/mp03")) {
+  dir.create("data/mp03", recursive = TRUE)
+}
+
+nyc_tract_file <- "data/mp03/nyc_tract_all_groups_2024.rds"
+
+nyc_counties <- c("New York", "Kings", "Queens", "Bronx", "Richmond")
+
+if (!file.exists(nyc_tract_file)) {
+  nyc_total <- get_acs(
+    geography = "tract",
+    variables = c(total_pop = "B01003_001"),
+    state = "NY",
+    county = nyc_counties,
+    year = 2024,
+    survey = "acs5",
+    geometry = TRUE
+  ) |>
+    select(GEOID, NAME, total_pop = estimate, geometry)
+
+  nyc_asian <- get_acs(
+    geography = "tract", table = "B02018",
+    state = "NY", county = nyc_counties,
+    year = 2024, survey = "acs5", geometry = FALSE
+  ) |>
+    mutate(table_id = "B02018")
+
+  nyc_european <- get_acs(
+    geography = "tract", table = "B04006",
+    state = "NY", county = nyc_counties,
+    year = 2024, survey = "acs5", geometry = FALSE
+  ) |>
+    mutate(table_id = "B04006")
+
+  nyc_latino <- get_acs(
+    geography = "tract", table = "B03001",
+    state = "NY", county = nyc_counties,
+    year = 2024, survey = "acs5", geometry = FALSE
+  ) |>
+    mutate(table_id = "B03001")
+
+  all_groups <- bind_rows(nyc_asian, nyc_european, nyc_latino) |>
+    select(GEOID, table_id, variable, estimate, moe)
+
+  nyc_tract_combined <- nyc_total |>
+    left_join(all_groups, by = "GEOID")
+
+  saveRDS(nyc_tract_combined, nyc_tract_file)
+}
+
+nyc_tract_data <- readRDS(nyc_tract_file)
+```
+
+```{r, message=FALSE, warning=FALSE}
+#| code-summary: "Acquiring data set for NYC Neighborhood Tabulation Areas (NTA)"
+
+library(sf)
+library(dplyr)
+
+load_nyc_nta <- function() {
+  data_dir <- "data/mp03"
+  if (!dir.exists(data_dir)) {
+    dir.create(data_dir, recursive = TRUE)
+  }
+
+  zip_path <- file.path(data_dir, "nynta2020.zip")
+  unzip_dir <- file.path(data_dir, "nynta2020_unzipped")
+
+  if (!file.exists(zip_path)) {
+    nta_url <- "https://s-media.nyc.gov/agencies/dcp/assets/files/zip/data-tools/bytes/neighborhood-tabulation-areas/nynta2020_26d.zip"
+    download.file(url = nta_url, destfile = zip_path, mode = "wb")
+  }
+
+  if (!dir.exists(unzip_dir)) {
+    unzip(zipfile = zip_path, exdir = unzip_dir)
+  }
+
+  shp_file <- list.files(unzip_dir, pattern = "\\.shp$", full.names = TRUE, recursive = TRUE)[1]
+  nta_sf <- st_read(shp_file, quiet = TRUE)
+
+  nta_clean <- nta_sf |>
+    select(any_of(c("BoroCode", "BoroName", "CountyFIPS", "NTA2020", "NTAName", "NTAType")))
+
+  return(nta_clean)
+}
+
+nyc_nta <- load_nyc_nta()
+```
+
+```{r, message=FALSE, warning=FALSE}
+#| code-summary: "Aggregating population counts from tract level to neighborhood level"
+
+library(sf)
+library(dplyr)
+
+nyc_tract_projected <- st_transform(nyc_tract_data, st_crs(nyc_nta))
+
+tract_to_nta <- nyc_tract_projected |>
+  select(GEOID, total_pop) |>
+  distinct(GEOID, .keep_all = TRUE) |>
+  st_join(nyc_nta, join = st_intersects, largest = TRUE) |>
+  st_drop_geometry() 
+
+nta_total_pop <- tract_to_nta |>
+  filter(!is.na(NTA2020)) |> 
+  group_by(NTA2020, NTAName, BoroName) |>
+  summarise(nta_total_pop = sum(total_pop, na.rm = TRUE), .groups = "drop")
+
+nta_group_pop <- nyc_tract_projected |>
+  st_drop_geometry() |>
+  select(GEOID, table_id, variable, estimate) |>
+  inner_join(tract_to_nta |> select(GEOID, NTA2020), by = "GEOID") |>
+  filter(!is.na(NTA2020)) |>
+  group_by(NTA2020, table_id, variable) |>
+  summarise(group_pop = sum(estimate, na.rm = TRUE), .groups = "drop")
+
+nta_population_sf <- nyc_nta |>
+  left_join(nta_total_pop |> select(NTA2020, nta_total_pop), by = "NTA2020") |>
+  left_join(nta_group_pop, by = "NTA2020") |>
+  mutate(group_pct = group_pop / nta_total_pop)
+```
+
+```{r, message=FALSE, warning=FALSE}
+#| code-summary: "Downloding NYC Primary Land Use Tax Output (PLUTO) data"
+
+library(dplyr)
+library(readr)
+library(httr2)
+library(stringr)
+
+load_nyc_pluto <- function() {
+  data_dir <- "data/mp03"
+  if (!dir.exists(data_dir)) {
+    dir.create(data_dir, recursive = TRUE)
+  }
+
+  pluto_file <- file.path(data_dir, "nyc_pluto_clean.csv")
+
+  if (file.exists(pluto_file)) {
+    return(read_csv(pluto_file, show_col_types = FALSE))
+  }
+
+  base_url <- "https://data.cityofnewyork.us/resource/64uk-42ks.csv"
+
+  keep_cols <- c(
+    "borough", "bct2020", "officearea", "unitsres", "resarea", 
+    "numfloors", "landuse", "bldgclass"
+  )
+  select_str <- paste(keep_cols, collapse = ",")
+
+  limit <- 50000
+  offset <- 0
+  all_chunks <- list()
+  page <- 1
+
+  repeat {
+    message(sprintf("Downloading PLUTO page %d (offset = %d)...", page, offset))
+    
+    req <- request(base_url) |>
+      req_url_query(
+        `$select` = select_str,
+        `$limit` = limit,
+        `$offset` = offset,
+        `$order` = ":id"
+      )
+    
+    resp <- req_perform(req)
+    chunk <- resp_body_string(resp) |>
+      read_csv(show_col_types = FALSE)
+
+    all_chunks[[page]] <- chunk
+
+    if (nrow(chunk) < limit) {
+      break
+    }
+
+    offset <- offset + limit
+    page <- page + 1
+  }
+
+  pluto_full <- bind_rows(all_chunks)
+  write_csv(pluto_full, pluto_file)
+
+  return(pluto_full)
+}
+
+nyc_pluto <- load_nyc_pluto()
+
+# Convert 7-digit PLUTO `bct2020` codes into standard 11-digit Census Tract `GEOID`s
+
+nyc_pluto_clean <- nyc_pluto |>
+  mutate(
+    bct2020_str = str_pad(as.character(bct2020), width = 7, side = "left", pad = "0"),
+    boro_digit = substr(bct2020_str, 1, 1),
+    tract_code = substr(bct2020_str, 2, 7),
+    county_fips = case_match(
+      boro_digit,
+      "1" ~ "061", # Manhattan (New York)
+      "2" ~ "005", # Bronx
+      "3" ~ "047", # Brooklyn (Kings)
+      "4" ~ "081", # Queens
+      "5" ~ "085", # Staten Island (Richmond)
+      .default = NA_character_
+    ),
+    GEOID = if_else(!is.na(county_fips), paste0("36", county_fips, tract_code), NA_character_),
+    
+    officearea = coalesce(as.numeric(officearea), 0),
+    resarea = coalesce(as.numeric(resarea), 0),
+    unitsres = coalesce(as.numeric(unitsres), 0),
+    numfloors = as.numeric(numfloors)
+  ) |>
+  
+  left_join(tract_to_nta |> select(GEOID, NTA2020, NTAName), by = "GEOID")
+```
+
+
+## Exploratory Data Analysis
+1. Which NYC census tract has the most office floor area in NYC?
+```{r, message=FALSE, warning=FALSE}
+
+tract_lookup <- nyc_tract_data |>
+  st_drop_geometry() |>
+  select(GEOID, NAME) |>
+  distinct(GEOID, .keep_all = TRUE) |>
+  left_join(
+    tract_to_nta |>
+      select(GEOID, NTAName, BoroName) |>
+      distinct(GEOID, .keep_all = TRUE),
+    by = "GEOID"
+  )
+
+office_tract <- nyc_pluto_clean |>
+  filter(!is.na(GEOID)) |>
+  group_by(GEOID) |>
+  summarise(
+    total_office_sqft = sum(officearea, na.rm = TRUE),
+    num_lots = n(),
+    .groups = "drop"
+  ) |>
+  left_join(tract_lookup, by = "GEOID") |>
+  arrange(desc(total_office_sqft))
+
+q1_top <- office_tract |> slice(1)
+q1_top
+```
+The census tract 9, which is **Financial District-Battery Park City in Manhattan**, has the most office floor area in NYC. The total floor area is `r scales::comma(office_tract$total_office_sqft[1])`.
+
+2. Which NYC NTA has the most residential units?
+```{r, message=FALSE, warning=FALSE}
+library(gt)
+
+res_nta <- nyc_pluto_clean |>
+  filter(!is.na(NTAName)) |>
+  group_by(NTAName, borough) |>
+  summarise(total_res_units = sum(unitsres, na.rm = TRUE), .groups = "drop") |>
+  arrange(desc(total_res_units))
+
+res_nta |>
+  slice_head(n = 5) |>
+  gt() |>
+  tab_header(title = "Top 5 NYC NTAs by Total Residential Units") |>
+  cols_label(
+    NTAName = "Neighborhood (NTA)",
+    borough = "Borough",
+    total_res_units = "Residential Units"
+  ) |>
+  tab_style(
+    style = cell_fill(color = "#FFF2CC"),
+    locations = cells_body(rows = 1)
+  ) |>
+  fmt_number(columns = total_res_units, decimals = 0)
+```
+As shown in the table above, all five NYC NTAs with the highest number of residential units are located in **Manhattan**, particularly on the *Upper East Side* and *Upper West Side*. Among them, **Upper East Side–Lenox Hill–Roosevelt Island** has the most residential units, with a total of **`r scales::comma(res_nta$residential_units[1])` units**.
+
+3. Which NYC census tract has the highest population density, measured as population per square foot of residential space? Do your answers change if you measure by population per residential unit?
+```{r, message=FALSE, warning=FALSE}
+density <- nyc_pluto_clean |>
+  filter(!is.na(GEOID)) |>
+  group_by(GEOID, NTAName) |>
+  summarise(
+    total_res_sqft = sum(resarea, na.rm = TRUE),
+    total_res_units = sum(unitsres, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+
+  inner_join(
+    nyc_tract_data |>
+      st_drop_geometry() |>
+      select(GEOID, NAME, total_pop) |>
+      distinct(GEOID, .keep_all = TRUE), by = "GEOID"
+  ) |>
+
+  filter(total_res_sqft > 0, total_res_units > 0, total_pop > 0) |>
+  mutate(
+    pop_per_sqft = total_pop / total_res_sqft,
+    pop_per_unit = total_pop / total_res_units
+  )
+
+sqrt_d <- density |> slice_max(pop_per_sqft, n = 3)
+
+unit_d <- density |> slice_max(pop_per_unit, n = 3)
+```
+
+The formula used to calculate population per square foot of residential space is:
+$$
+\text{Population per square foot}
+=
+\frac{\text{Total Population}}{\text{Total Residential Floor Area (sqft.)}}
+$$
+
+Similarly, the formula used to calculate population per per residential unit is:
+$$
+\text{Population per Residential Unit}
+=
+\frac{\text{Total Population}}{\text{Total Residential Units}}
+$$
+
+The results show that the top two census tracts remain the same under both measures of population density, with **`r sqrt_d$NTAName[1]`** in Kings County ranking first. However, the third-ranked census tract differs depending on the measure used. **`r sqrt_d$NTAName[3]`** ranks third in population per square foot of residential space, while **`r unit_d$NTAName[3]`** ranks third in population per residential unit. This suggests that although the two measures produce similar rankings, the choice of measure can still affect the results.
+
+4. What 5 metro areas, other than NYC, have the largest share of population that identify with your ancestry of interest?
+
+Initially, we planned to analyze the distribution of Taiwanese populations across U.S. metropolitan areas. However, due to data availability limitations in the ACS dataset, we decided to shift our focus to the Mexican-origin population. Given Mexico's geographical proximity to the United States and our personal experiences interacting with people from Mexico, we became interested in exploring how Mexican-origin populations are distributed across different U.S. metropolitan areas.
+```{r, message=FALSE, warning=FALSE}
+
+# Get ACS data
+q4 <- get_acs(
+  geography = "cbsa",
+  variables = c(Mexican = "B03001_004"),
+  year = 2024,
+  survey = "acs5"
+)
+
+# Top 5 metro areas
+q4_top <- q4 |>
+  left_join(
+    get_acs(
+      geography = "cbsa",
+      variables = "B03001_001",
+      year = 2024,
+      survey = "acs5"
+    ) |>
+      select(GEOID, total_pop = estimate),
+    by = "GEOID"
+  ) |>
+  filter(
+    str_detect(NAME, "Metro Area"),
+    !str_detect(NAME, "^New York-Newark"),
+    !is.na(estimate),
+    total_pop > 0
+  ) |>
+  mutate(share = estimate / total_pop) |>
+  slice_max(share, n = 5, with_ties = FALSE)
+
+# Table
+
+q4_top |>
+  select(NAME, estimate, total_pop, share) |>
+  gt() |>
+  tab_header(
+    title = "Top 5 U.S. Metro Areas by Mexican-Origin Population Share",
+    subtitle = "2020–2024 ACS 5-Year Estimates | Excluding NYC Metro Area"
+  ) |>
+  cols_label(
+    NAME = "Metropolitan Area",
+    estimate = "Mexican-Origin Population",
+    total_pop = "Total Population",
+    share = "Population Share"
+  ) |>
+  fmt_number(
+    columns = c(estimate, total_pop),
+    decimals = 0
+  ) |>
+  fmt_percent(columns = share, decimals = 2) |>
+  tab_style(
+    style = cell_fill(color = "#FFF2CC"),
+    locations = cells_body(rows = 1)
+  )
+```
+The results show that four of the five metropolitan areas with the highest Mexican-origin population shares are located in **Texas**, while the remaining one is in California. **`r q4_top$NAME[1]`**, has the highest share, with approximately **`r scales::percent(q4_top$share[1], accuracy = 0.01)`** of its population identifying as Mexican-origin. However, **`r q4_top$NAME[3]`**, has a much larger Mexican-origin population despite having a lower population share. This highlights the difference between population size and population share. The concentration of these metropolitan areas near the U.S.–Mexico border may be related to their geographic proximity and historical connections with Mexico.
+
+5. At a not-too-granular level, describe the distribution of ancestries in a large non-NYC city of your choosing from the previous question.
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+
+# Get ancestry data
+q5 <- get_acs(
+  geography = "place",
+  state = "TX",
+  table = "B03001",
+  year = 2024,
+  survey = "acs5"
+) |>
+  filter(NAME == "Eagle Pass city, Texas")
+
+# Get group names
+labels <- load_variables(2024, "acs5")
+
+# Calculate population share
+
+q5_dist <- q5 |>
+  left_join(labels, by = c("variable" = "name")) |>
+  filter(
+    variable != "B03001_002",
+    !str_ends(label, ":"),
+    !is.na(estimate),
+    estimate > 0
+  ) |>
+  mutate(
+    group = sub(".*!!", "", label),
+    share = estimate / q5$estimate[q5$variable == "B03001_003"]
+  ) |>
+  slice_max(share, n = 10)
+
+# Display chart
+ggplot(q5_dist, aes(x = reorder(group, share), y = share)) +
+  geom_col(fill = "steelblue") +
+  geom_text(
+    aes(label = scales::percent(share, accuracy = 0.1)),
+    hjust = -0.2,
+    size = 3.5
+  ) +
+  coord_flip() +
+  scale_y_continuous(
+    labels = scales::percent,
+    expand = expansion(mult = c(0, 0.15))
+  ) +
+  labs(
+    title = "Hispanic Origin Distribution in Eagle Pass, TX",
+    x = "Origin",
+    y = "Share of Hispanic Population"
+  ) +
+  theme_minimal()
+```
+Continuing from the previous question, we then analyze the Hispanic origin distribution in Eagle Pass. The results show that Mexican-origin residents account for approximately **`r scales::percent(q5_dist$share[1], accuracy = 0.01)`** of the Hispanic or Latino population in Eagle Pass City, making them the dominant group. Other Hispanic-origin groups, such as Puerto Ricans and Colombians, represent much smaller shares. 
+
+6. As a percentage of all US residents who identify with your ancestry of interest, how many live in NY and how many live in other major metro areas?
+```{r, message=FALSE, warning=FALSE}
+# Total Mexican population in the U.S.
+us_pop <- get_acs(
+  geography = "us",
+  variables = "B03001_004",
+  year = 2024,
+  survey = "acs5"
+) |>
+  pull(estimate)
+
+# Mexican population in NYC (five boroughs)
+nyc_pop <- get_acs(
+  geography = "county",
+  state = "NY",
+  county = c("Bronx", "Kings", "New York", "Queens", "Richmond"),
+  variables = "B03001_004",
+  year = 2024,
+  survey = "acs5"
+) |>
+  summarise(n = sum(estimate, na.rm = TRUE)) |>
+  pull(n)
+
+# Five major metro areas outside NYC
+q6 <- q4 |>
+  filter(
+    variable == "Mexican",
+    str_detect(NAME, "Metro Area"),
+    !str_detect(NAME, "^New York-Newark"),
+    !is.na(estimate)
+  ) |>
+  slice_max(estimate, n = 5, with_ties = FALSE) |>
+  transmute(area = NAME, population = estimate)
+
+# Add NYC and calculate percentages
+q6 <- bind_rows(
+  tibble(area = "New York City", population = nyc_pop),
+  q6
+) |>
+  mutate(share = population / us_pop)
+
+# Display table
+q6 |>
+  gt() |>
+  tab_header(
+    title = "Mexican Population Distribution in the U.S.",
+    subtitle = "2020–2024 ACS 5-Year Estimates"
+  ) |>
+  fmt_number(columns = population, decimals = 0) |>
+  fmt_percent(columns = share, decimals = 2)
+```
+
+The results show that **`r q6$area[2]`** has the largest Mexican-origin population among the selected areas, accounting for approximately **`r scales::percent(q6$share[2], accuracy = 0.01)`** of the U.S. total. In contrast, **New York City** has approximately **`r scales::comma(q6$population[1])`** Mexican-origin residents, representing only **`r scales::percent(q6$share[1], accuracy = 0.01)`** of the national Mexican-origin population.
+
+7. Do we observe a roughly linear relationship between population and housing (units or area) across NYC tracts or is the relationship more complex?
+```{r, message=FALSE, warning=FALSE}
+# Calculate R-squared
+q7_r2 <- summary(
+  lm(total_pop ~ total_res_units, data = density)
+)$r.squared
+
+q7_r2
+
+# Scatter plot
+ggplot(density, aes(x = total_res_units, y = total_pop)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  geom_smooth(method = "loess", se = FALSE, color = "blue") +
+  labs(
+    title = "Population vs. Residential Units in NYC",
+    x = "Residential Units",
+    y = "Population"
+  ) +
+  theme_minimal()
+```
+The red line represents the linear regression fit between population and residential units, while the blue line represents the LOESS (Locally Estimated Scatterplot Smoothing) curve. Most census tracts have fewer than 3,000 residential units, and the overall trend suggests a positive relationship between the two variables. However, the LOESS curve levels off and eventually declines as the number of residential units increases. This pattern may be influenced by the relatively small number of observations in that range. Therefore, although the relationship is generally positive, it appears to be more complex than a simple linear relationship.
+
+8. What are the NTAs with highest buildings?
+```{r, message=FALSE, warning=FALSE}
+# Find tallest buildings by NTA
+q8 <- nyc_pluto_clean |>
+  filter(
+    !is.na(NTAName),
+    numfloors > 0,
+    !(NTAName == "Borough Park" & numfloors > 300)
+  ) |>
+  group_by(NTAName, borough) |>
+  summarise(
+    max_floors = max(numfloors),
+    .groups = "drop"
+  ) |>
+  slice_max(max_floors, n = 10, with_ties = FALSE)
+
+# Display table
+q8 |>
+  gt() |>
+  tab_header(
+    title = "Top 10 NYC NTAs by Maximum Recorded Building Floors"
+  ) |>
+  cols_label(
+    NTAName = "Neighborhood (NTA)",
+    borough = "Borough",
+    max_floors = "Maximum Floors"
+  ) |>
+  tab_style(
+    style = cell_fill(color = "#FFF2CC"),
+    locations = cells_body(rows = 1)
+  )
+```
+The results show that among the top 10 NTAs with the tallest recorded buildings, **seven are located in Manhattan, one in Brooklyn, and two in Queens**. **Financial District–Battery Park City** in Manhattan ranks first, with a maximum recorded building height of **`r q8$max_floors[1]` floors**. **Midtown South–Flatiron–Union Square**, also located in Manhattan, ranks second, with its tallest recorded building exceeding 100 floors.
+
+One notable finding is an unusually high value of approximately 343 floors recorded in Borough Park, Brooklyn. Since this value was substantially higher than the surrounding building records, it was treated as a potential data error and excluded from the ranking.
+
+9. Visualize how population density varies across NYC?
+```{r, message=FALSE, warning=FALSE}
+# Calculate population density for each NTA
+q9 <- nyc_nta |>
+  left_join(
+    nta_total_pop |> select(NTA2020, nta_total_pop),
+    by = "NTA2020"
+  ) |>
+  mutate(
+    area_sqmi = as.numeric(st_area(geometry)) / 27878400,
+    density = nta_total_pop / area_sqmi
+  )
+
+library(plotly)
+
+# Create hover labels
+q9$hover_text <- paste0(
+  "Neighborhood: ", q9$NTAName,
+  "<br>Population Density: ",
+  scales::comma(round(q9$density, 0)),
+  " residents/sq mi"
+)
+
+# Create map
+p <- ggplot(q9) +
+  geom_sf(
+    aes(fill = density, text = hover_text),
+    color = "white",
+    linewidth = 0.1
+  ) +
+  scale_fill_viridis_c(name = "Population Density") +
+  labs(title = "Population Density Across NYC") +
+  theme_void()
+
+# Convert to interactive map
+ggplotly(p, tooltip = "text")
+```
+The map illustrates how population density varies across New York City's neighborhoods. Overall, **Manhattan appears to have higher population density than the other boroughs**, with several densely populated neighborhoods concentrated in this area. Among all NTAs, **Upper East Side–Yorkville** has the highest estimated population density, reaching approximately **160,486 residents per square mile**. In contrast, many neighborhoods in Staten Island and the outer parts of Queens show relatively lower population densities.
+
+10. How many New Yorkers live in areas that could be described as ‘primarily commercial’?
+```{r, message=FALSE, warning=FALSE}
+# Calculate office share by census tract
+q10 <- nyc_pluto_clean |>
+  filter(!is.na(GEOID)) |>
+  group_by(GEOID) |>
+  summarise(
+    office = sum(officearea, na.rm = TRUE),
+    residential = sum(resarea, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  inner_join(
+    nyc_tract_data |>
+      st_drop_geometry() |>
+      select(GEOID, total_pop) |>
+      distinct(GEOID, .keep_all = TRUE),
+    by = "GEOID"
+  ) |>
+  filter(office + residential > 0, !is.na(total_pop)) |>
+  mutate(
+    office_share = office / (office + residential)
+  )
+
+# Number of residents in primarily office areas
+nyc_pop <- nyc_tract_data |>
+  st_drop_geometry() |>
+  distinct(GEOID, .keep_all = TRUE) |>
+  summarise(total = sum(total_pop, na.rm = TRUE)) |>
+  pull(total)
+
+q10 |>
+  filter(office_share > 0.5) |>
+  summarise(
+    tracts = n(),
+    residents = sum(total_pop),
+    share = residents / nyc_pop * 100
+  )
+```
+For this analysis, census tracts were classified as **primarily office-oriented** if office floor area accounted for more than 50% of the combined office and residential floor area. Office share was calculated using the following formula:
+$$
+\text{Office Share} =
+\frac{\text{Office Area}}{\text{Office Area} + \text{Residential Area}}
+$$
+Based on this definition, **`r q10$tracts` census tracts** were classified as primarily office-oriented, with approximately **`r scales::comma(q10$residents)` residents**, accounting for **`r scales::percent(q10$share, accuracy = 0.01)`** of NYC's total population.
+
+These findings indicate that primarily office-oriented areas can still contain residential populations. However, this analysis only considers office floor area as a proxy for commercial activity and does not include other commercial uses, such as retail stores and restaurants.
+
+
+## Final Deliverable: Atlas of Communities Entry
+
+*WELCOMED BY THE NEW COLOSSUS*
+  
+*AN ATLAS OF AMERICAN COMMUNITIES*
+
+# Mexican Americans: Beyond the Border
+
+*Tracing Mexican-Origin Communities Across the United States*
+
+**By:** Wen-Lan Cheng
+**Date:** November 27, 2026  
+**Category:** Culture & Communities
+
+---
+
+### A Community Beyond Borders
+The history of Mexican-origin communities in the United States can be traced back to the 19th century, especially the Mexican-American War and the **Treaty of Guadalupe Hidalgo** in 1848. This agreement not only changed the border between the two countries but also had a significant impact on Mexican communities living in these areas. As a result, some Mexican families became part of the United States without crossing the border.
+
+Over time, many Mexicans also moved to the United States in search of better job opportunities. In 1942, the United States and Mexico introduced the **Bracero Program**, which allowed Mexican workers to legally work in the United States under temporary contracts. The program helped the United States deal with labor shortages during World War II and continued until 1964. It also had a long-term influence on labor migration between the two countries.
+
+Since then, job opportunities, family reunification, and economic conditions have continued to influence migration between Mexico and the United States. Over time, Mexican-origin communities have expanded to different parts of the country rather than remaining only in border cities in the Southwest. From the U.S.–Mexico border in Texas to the busy streets of New York City, these communities have developed different population patterns and historical backgrounds. **Where are Mexican-origin residents mainly concentrated today? How have geography and historical events shaped their current distribution across the United States?**
+
+### A National View: Mexican Communities Across the U.S.
+```{r, message=FALSE, warning=FALSE}
+#| code-summary: "Figure 1: Mexican-Origin Population Across the U.S."
+#| echo: false
+
+
+library(tidycensus)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(sf)
+library(plotly)
+library(scales)
+
+# Get state-level population data
+us_map <- get_acs(
+  geography = "state",
+  variables = c(
+    Mexican = "B03001_004",
+    Total = "B03001_001"
+  ),
+  year = 2024,
+  survey = "acs5",
+  geometry = TRUE
+) |>
+  select(NAME, GEOID, variable, estimate, geometry) |>
+  pivot_wider(
+    names_from = variable,
+    values_from = estimate
+  ) |>
+  mutate(share = Mexican / Total) |>
+  filter(!NAME %in% c("Alaska", "Hawaii", "Puerto Rico"))
+
+# Create hover labels
+us_map$hover_text <- paste0(
+  "State: ", us_map$NAME,
+  "<br>Mexican-Origin Population: ",
+  comma(us_map$Mexican),
+  "<br>Population Share: ",
+  percent(us_map$share, accuracy = 0.1)
+)
+
+# Select top 5 states by population share
+top_states <- us_map |>
+  slice_max(share, n = 5, with_ties = FALSE) |>
+  mutate(
+    abb = state.abb[match(NAME, state.name)]
+  )
+
+# Create map
+p_us <- ggplot(us_map) +
+  geom_sf(
+    aes(fill = share, text = hover_text),
+    color = "white",
+    linewidth = 0.2
+  ) +
+  geom_sf_text(
+    data = top_states,
+    aes(label = abb),
+    size = 3.5,
+    fontface = "bold",
+    color = "black"
+  ) +
+  scale_fill_viridis_c(
+    labels = percent,
+    name = "Mexican-Origin Share",
+    option = "viridis",
+    na.value = "grey90"
+  ) +
+  coord_sf(
+    xlim = c(-125, -66.5),
+    ylim = c(24, 50),
+    expand = FALSE
+  ) +
+  labs(
+    title = "Figure 1: Mexican-Origin Communities Across the U.S.",
+    subtitle = "Share of Each State's Total Population",
+    caption = "Source: ACS 2020–2024 5-Year Estimates"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 11),
+    plot.caption = element_text(size = 9),
+    legend.position = "right"
+  )
+
+# Interactive map
+ggplotly(p_us, tooltip = "text")
+
+```
+We first take a look at the geographic distribution of Mexican-origin populations across the United States. The population share is calculated by **dividing the Mexican-origin population in each state by that state's total population.** Mexican-origin residents are particularly concentrated in the American Southwest, with some of the highest population shares observed in states along the U.S.–Mexico border.
+
+The map illustrates **New Mexico** has the highest Mexican-origin population share at approximately **32.4%**, followed closely by **California (32.3%)** and **Texas (32.1%)**. Although these three states have similar population shares, this does not necessarily mean they have similar Mexican-origin population sizes, as their total populations differ.
+
+### A Closer Look: Mexican Communities in NYC
+```{r, message=FALSE, warning=FALSE}
+#| code-summary: "Figure 2: Mexican-Origin Population Across NYC"
+#| echo: false
+
+# Mexican-origin population in NYC
+mexican_nyc <- nta_population_sf |>
+  filter(
+    table_id == "B03001",
+    variable == "B03001_004"
+  )
+
+library(plotly)
+
+# Create hover labels
+mexican_nyc$hover_text <- paste0(
+  "Neighborhood: ", mexican_nyc$NTAName,
+  "<br>Mexican-Origin Population: ",
+  scales::comma(mexican_nyc$group_pop),
+  "<br>Population Share: ",
+  scales::percent(mexican_nyc$group_pct, accuracy = 0.1)
+)
+
+# Create map
+p <- ggplot(mexican_nyc) +
+  geom_sf(
+    aes(fill = group_pct, text = hover_text),
+    color = "white",
+    linewidth = 0.1
+  ) +
+  scale_fill_viridis_c(
+    labels = scales::percent,
+    name = "Mexican-Origin Share",
+    na.value = "grey90"
+  ) +
+  labs(
+    title = "Figure 2: Mexican-Origin Population Across NYC",
+    subtitle = "Share of Total Population by NTA"
+  ) +
+  theme_void()
+
+# Convert to interactive map
+ggplotly(p, tooltip = "text")
+
+```
+
+```{r, message=FALSE, warning=FALSE}
+#| code-summary: "Table 1: Top 5 NYC NTAs by Mexican-Origin Population Share"
+#| echo: false
+
+q_nyc_top5 <- mexican_nyc |>
+  st_drop_geometry() |>
+  filter(nta_total_pop > 0, !is.na(group_pct)) |>
+  slice_max(group_pct, n = 5, with_ties = FALSE)
+
+q_nyc_top5 |>
+  select(NTAName, group_pop, nta_total_pop, group_pct) |>
+  gt() |>
+  tab_header(
+    title = "Table 1: Top 5 NYC NTAs by Mexican-Origin Population Share",
+    subtitle = "2020–2024 ACS 5-Year Estimates"
+  ) |>
+  cols_label(
+    NTAName = "Neighborhood (NTA)",
+    group_pop = "Mexican-Origin Population",
+    nta_total_pop = "Total Population",
+    group_pct = "Population Share"
+  ) |>
+  fmt_number(
+    columns = c(group_pop, nta_total_pop),
+    decimals = 0
+  ) |>
+  fmt_percent(
+    columns = group_pct,
+    decimals = 2
+  ) |>
+  tab_style(
+    style = cell_fill(color = "#FFF2CC"),
+    locations = cells_body(rows = 1)
+  ) |>
+  tab_style(
+    style = cell_fill(color = "#E2F0D9"),
+    locations = cells_body(rows = 2)
+  )
+```
+To explore deeply for the presence of Mexican-origin communities in New York City, we then examine their geographic distribution across different neighborhoods in New York City. 
+
+As shown in Figure 2 and Table 1, Several neighborhoods in *Brooklyn* and *Queens* have relatively high shares of Mexican-origin residents. However, when comparing the share of Mexican-origin residents within each neighborhood, **Port Richmond in Staten Island** has the highest percentage, at **`r scales::percent(q_nyc_top5$group_pct[1], accuracy = 0.01)`**. **Sunset Park (West) in Brooklyn** ranks second, with **`r scales::comma(q_nyc_top5$group_pop[2])` Mexican-origin residents** out of a total population of **`r q_nyc_top5$nta_total_pop[2]`**, accounting for approximately **`r scales::percent(q_nyc_top5$group_pct[2], accuracy = 0.01)`** of the neighborhood's population. These findings illustrate how Mexican-origin communities vary across New York City's neighborhoods, as a neighborhood with a relatively high Mexican-origin share does not necessarily have the largest Mexican-origin population.
+
+### Conclusion: Communities Across America
+Against this complex historical background, Mexican-origin communities have spread across different parts of the United States, but their population distribution varies by region. Mexican-origin communities are only one of the many ethnic groups that make up American society. In a country shaped by immigration and cultural diversity, many families have worked hard to build their lives over generations, becoming part of American history.
+
+Nonetheless, this situation has also raised concerns in American society. Some Americans worry that immigration may increase job competition and affect their quality of life. As a result, they have called on the government to take action. However, it is important to remember that not all Mexican-origin Americans are immigrants, and their histories and experiences are different.
+
+How should the government balance immigration enforcement, economic needs, and opportunities for immigrants to build better lives? This remains an important question for both the American people and the government.
+
+::: {.callout-note title="AI Usage Statement" collapse="true"}
+
+Gemini was used to help write the code in this project, but all non-code text was generated without the use of any Generative AI tools. Additionally, Gemini was used to provide additional background information on the topic and to brainstorm ideas for the final open-ended prompt.
+
+:::
